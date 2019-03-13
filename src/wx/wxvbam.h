@@ -87,6 +87,7 @@ public:
     virtual void OnInitCmdLine(wxCmdLineParser&);
     virtual bool OnCmdLineParsed(wxCmdLineParser&);
     wxString GetConfigurationPath();
+    const wxString GetPluginsDir();
     wxString GetAbsolutePath(wxString path);
     // name of a file to load at earliest opportunity
     wxString pending_load;
@@ -142,7 +143,7 @@ protected:
 
 private:
     wxPathList config_path;
-    char* home;
+    char* home = NULL;
 };
 
 DECLARE_APP(wxvbamApp);
@@ -355,6 +356,9 @@ private:
     void OnDropFile(wxDropFilesEvent&);
     // pop up menu in fullscreen mode
     void OnMenu(wxContextMenuEvent&);
+    // window geometry
+    void OnMove(wxMoveEvent& event);
+    void OnSize(wxSizeEvent& event);
     // Load a named wxDialog from the XRC file
     wxDialog* LoadXRCDialog(const char* name);
     // Load a named wxDialog from the XRC file

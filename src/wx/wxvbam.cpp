@@ -32,26 +32,6 @@
 IMPLEMENT_APP(wxvbamApp)
 IMPLEMENT_DYNAMIC_CLASS(MainFrame, wxFrame)
 
-// Get XDG_CONFIG_HOME dir manually
-// only native support for XDG config when wxWidgets >= 3.1
-static wxString get_xdg_user_config_home()
-{
-    wxString path;
-    char *xdg_config_home = getenv("XDG_CONFIG_HOME");
-    // Default for XDG_CONFIG_HOME is '$HOME/.config'
-    if (!xdg_config_home || !*xdg_config_home)
-    {
-	wxString xdg_default(getenv("HOME"));
-	xdg_default += "/.config";
-	path = xdg_default;
-    }
-    else
-    {
-	path = xdg_config_home;
-    }
-    return path + "/";
-}
-
 // generate config file path
 static void get_config_path(wxPathList& path, bool exists = true)
 {
@@ -68,6 +48,14 @@ static void get_config_path(wxPathList& path, bool exists = true)
         if ((wxDirExists(s) && wxIsWritable(s)) || ((!exists || !wxDirExists(s)) && parent.IsDirWritable())) \
             path.Add(s);                                                                                     \
     } while (0)
+#define add_nonstandard_path(p)                                                                                          \
+    do {                                                                                                     \
+        const wxString& s = p;                                                                          \
+        wxFileName parent = wxFileName::DirName(s + wxT("//.."));                                            \
+        parent.MakeAbsolute();                                                                               \
+        if ((wxDirExists(s) && wxIsWritable(s)) || ((!exists || !wxDirExists(s)) && parent.IsDirWritable())) \
+            path.Add(s);                                                                                     \
+    } while (0)
 
     static bool debug_dumped = false;
 
@@ -78,28 +66,30 @@ static void get_config_path(wxPathList& path, bool exists = true)
         wxLogDebug(wxT("GetResourcesDir(): %s"), stdp.GetResourcesDir().mb_str());
         wxLogDebug(wxT("GetDataDir(): %s"), stdp.GetDataDir().mb_str());
         wxLogDebug(wxT("GetLocalDataDir(): %s"), stdp.GetLocalDataDir().mb_str());
-        wxLogDebug(wxT("GetPluginsDir(): %s"), stdp.GetPluginsDir().mb_str());
-#if defined(__LINUX__)
+        wxLogDebug(wxT("plugins_dir: %s"), wxGetApp().GetPluginsDir().mb_str());
         wxLogDebug(wxT("XdgConfigDir: %s"), get_xdg_user_config_home() + current_app_name);
-#endif
         debug_dumped = true;
     }
 
 // When native support for XDG dirs is available (wxWidgets >= 3.1),
 // this will be no longer necessary
-#if defined(__LINUX__)
+#if defined(__WXGTK__)
     // XDG spec manual support
     // ${XDG_CONFIG_HOME:-$HOME/.config}/`appname`
     wxString old_config = wxString(getenv("HOME")) + "/.vbam";
-    wxString new_config = get_xdg_user_config_home();
+    wxString new_config(get_xdg_user_config_home());
     if (!wxDirExists(old_config) && wxIsWritable(new_config))
     {
-        path.Add(new_config + current_app_name);
+        wxFileName new_path(new_config, wxEmptyString);
+        new_path.AppendDir(current_app_name);
+        new_path.MakeAbsolute();
+
+        add_nonstandard_path(new_path.GetFullPath());
     }
     else
     {
 	// config is in $HOME/.vbam/vbam.conf
-	path.Add(old_config);
+	add_nonstandard_path(old_config);
     }
 #endif
 
@@ -110,7 +100,7 @@ static void get_config_path(wxPathList& path, bool exists = true)
     add_path(GetResourcesDir());
     add_path(GetDataDir());
     add_path(GetLocalDataDir());
-    add_path(GetPluginsDir());
+    add_nonstandard_path(wxGetApp().GetPluginsDir());
 }
 
 static void tack_full_path(wxString& s, const wxString& app = wxEmptyString)
@@ -121,6 +111,11 @@ static void tack_full_path(wxString& s, const wxString& app = wxEmptyString)
 
     for (int i = 0; i < full_config_path.size(); i++)
         s += wxT("\n\t") + full_config_path[i] + app;
+}
+
+const wxString wxvbamApp::GetPluginsDir()
+{
+    return wxStandardPaths::Get().GetPluginsDir();
 }
 
 wxString wxvbamApp::GetConfigurationPath()
@@ -253,12 +248,20 @@ bool wxvbamApp::OnInit()
 // this needs to be in a subdir to support other config as well
 // but subdir flag behaves differently 2.8 vs. 2.9.  Oh well.
 // NOTE: this does not support XDG (freedesktop.org) paths
-#if defined(__WXMSW__) || defined(__APPLE__)
     wxString confname("vbam.ini");
-#else
-    wxString confname("vbam.conf");
-#endif
     wxFileName vbamconf(GetConfigurationPath(), confname);
+// /MIGRATION
+// migrate from 'vbam.conf' to 'vbam.ini' to manage a single config
+// file for all platforms.
+#if !defined(__WXMSW__) && !defined(__APPLE__)
+    wxString oldConf(GetConfigurationPath() + "/vbam.conf");
+    wxString newConf(GetConfigurationPath() + "/vbam.ini");
+    if (wxFileExists(oldConf))
+    {
+	wxRenameFile(oldConf, newConf, false);
+    }
+#endif
+// /END_MIGRATION
     cfg = new wxFileConfig(wxT("vbam"), wxEmptyString,
         vbamconf.GetFullPath(),
         wxEmptyString, wxCONFIG_USE_LOCAL_FILE);
@@ -395,6 +398,11 @@ bool wxvbamApp::OnInit()
     }
 
     // create the main window
+    int x = windowPositionX;
+    int y = windowPositionY;
+    int width = windowWidth;
+    int height = windowHeight;
+    int isFullscreen = fullScreen;
     frame = wxDynamicCast(xr->LoadFrame(NULL, wxT("MainFrame")), MainFrame);
 
     if (!frame) {
@@ -406,6 +414,11 @@ bool wxvbamApp::OnInit()
     if (!frame->BindControls())
         return false;
 
+    if (x >= 0 && y >= 0 && width > 0 && height > 0)
+	frame->SetSize(x, y, width, height);
+
+    if (isFullscreen && wxGetApp().pending_load != wxEmptyString)
+	frame->ShowFullScreen(isFullscreen);
     frame->Show(true);
     return true;
 }
@@ -602,7 +615,8 @@ bool wxvbamApp::OnCmdLineParsed(wxCmdLineParser& cl)
 }
 
 wxvbamApp::~wxvbamApp() {
-    free(home);
+    if (home != NULL)
+	free(home);
 }
 
 MainFrame::MainFrame()
@@ -629,6 +643,9 @@ EVT_ACTIVATE(MainFrame::OnActivate)
 // requires DragAcceptFiles(true); even then may not do anything
 EVT_DROP_FILES(MainFrame::OnDropFile)
 
+// for window geometry
+EVT_MOVE(MainFrame::OnMove)
+EVT_SIZE(MainFrame::OnSize)
 // pause game if menu pops up
 //
 // This is a feature most people don't like, and it causes problems with
@@ -682,6 +699,39 @@ void MainFrame::OnMenu(wxContextMenuEvent& event)
 #endif
         PopupMenu(ctx_menu, p);
     }
+}
+
+void MainFrame::OnMove(wxMoveEvent& event)
+{
+    wxRect pos = GetRect();
+    int x = pos.GetX(), y = pos.GetY();
+    if (x >= 0 && y >= 0 && !IsFullScreen())
+    {
+	windowPositionX = x;
+	windowPositionY = y;
+	update_opts();
+    }
+}
+
+void MainFrame::OnSize(wxSizeEvent& event)
+{
+    wxFrame::OnSize(event);
+    wxRect pos = GetRect();
+    int height = pos.GetHeight(), width = pos.GetWidth();
+    int x = pos.GetX(), y = pos.GetY();
+    bool isFullscreen = IsFullScreen();
+    if (height > 0 && width > 0 && !isFullscreen)
+    {
+	windowHeight = height;
+	windowWidth = width;
+    }
+    if (x >= 0 && y >= 0 && !isFullscreen)
+    {
+	windowPositionX = x;
+	windowPositionY = y;
+    }
+    fullScreen = isFullscreen;
+    update_opts();
 }
 
 wxString MainFrame::GetGamePath(wxString path)
